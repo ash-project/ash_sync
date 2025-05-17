@@ -16,7 +16,21 @@ defmodule AshSync.Writer do
       |> Enum.filter(&(&1.__struct__ == AshSync.Mutation))
 
     {:ok, txid, _changes} =
-      Phoenix.Sync.Writer.new()
+      mutations
+      # need to handle multiple resources
+      # with the same table here
+      |> Enum.group_by(& &1.resource)
+      |> Enum.reduce(Phoenix.Sync.Writer.new(), fn {resource, mutations}, writer ->
+        Phoenix.Sync.Writer.allow(
+          Projects.Project,
+          check: fn %Phoenix.Sync.Writer.Operation{changes: changes} = operation ->
+            nil
+
+            # defstruct [:index, :operation, :relation, :data, :changes]
+          end
+        )
+      end)
+
       # |> Phoenix.Sync.Writer.allow(
       #   Projects.Project,
       #   check: reject_invalid_params/2,

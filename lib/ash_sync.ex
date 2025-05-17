@@ -39,30 +39,6 @@ defmodule AshSync do
     args: [:resource]
   }
 
-  defmodule Mutation do
-    defstruct [:name, :resource, :action, :type]
-  end
-
-  @mutation %Spark.Dsl.Entity{
-    name: :mutation,
-    target: Mutation,
-    schema: [
-      name: [
-        type: :atom,
-        doc: "The name of the query, shows up in `/sync/:name`"
-      ],
-      resource: [
-        type: :atom,
-        doc: "The resource to sync"
-      ],
-      action: [
-        type: :atom,
-        doc: "The action to sync"
-      ]
-    ],
-    args: [:name, :resource, :action]
-  }
-
   @sync %Spark.Dsl.Section{
     name: :sync,
     describe: "Define available sync actions",
