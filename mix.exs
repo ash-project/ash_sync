@@ -23,7 +23,8 @@ defmodule AshSync.MixProject do
   defp deps do
     [
       {:spark, "~> 2.0"},
-      {:ash, path: "../../ash/ash"},
+      {:ash, "~> 3.5"},
+      {:ash_postgres, "~> 2.5"},
       {:electric_client, "~> 0.5.0-beta-1"},
       {:igniter, "~> 0.5", optional: true},
       {:phoenix_sync, "~> 0.4"}
