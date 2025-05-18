@@ -60,7 +60,7 @@ defmodule AshSync.Codegen do
             (mutation: PendingMutation<#{types_union}>) => {
               const { collection: _, ...rest } = mutation
 
-              return { ...rest, query: mutation.collection.id };
+              return { ...rest, query: mutation.collection.config.id };
             }
           )
 
@@ -290,15 +290,14 @@ defmodule AshSync.Codegen do
           """
           #{type_definition}
           export function #{lowercase_first(query_name)}({ #{input_destructure}options }: #{params_name} = {}): Collection<#{resource_type_name}> {
-            return new Collection<#{resource_type_name}>({
+            return createElectricCollection<#{resource_type_name}>({
               id: '#{name}',
-              sync: createElectricSync({
+              streamOptions: {
                 ...options,
                 params: #{input_params_option},
                 url: relativeUrl('/sync/')
-              }, {
-                primaryKey: [#{primary_key}]
-              }),
+              },
+              primaryKey: [#{primary_key}],
               schema: #{lowercase_first(resource_type_name)}Schema
             })
           };
@@ -308,7 +307,8 @@ defmodule AshSync.Codegen do
 
     collections_content =
       """
-      import { Collection, createElectricSync } from '@tanstack/react-optimistic'
+      import { Collection } from "@tanstack/db";
+      import { createElectricCollection } from "@tanstack/db-collections";
       import { ShapeStreamOptions } from "@electric-sql/client";#{types_to_import}
       const relativeUrl = (path) => (
         `${window.location.origin}${path}`

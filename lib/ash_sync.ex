@@ -176,20 +176,24 @@ defmodule AshSync do
       Enum.find_value(sync_data, fn %{resource: resource, queries: queries} = sync ->
         action = Map.get(sync, action_key)
 
-        if action &&
-             Enum.any?(queries, fn query ->
-               if to_string(query.name) == mutation["query"] do
-                 {resource, query}
-               end
-             end) do
-          {resource, Ash.Resource.Info.action(resource, action), mutation}
+        if action do
+          query =
+            Enum.find(queries, fn query ->
+              if to_string(query.name) == mutation["query"] do
+                query
+              end
+            end)
+
+          if query do
+            {resource, Ash.Resource.Info.action(resource, action), mutation, query}
+          end
         end
       end)
       |> case do
         nil ->
           {:halt, {:error, "not found"}}
 
-        {resource, action, mutation} ->
+        {resource, action, mutation, %{action: read_action} = query} ->
           # TODO: handle schema multitenancy here
           # TODO: get actual default from repo?
           schema = AshPostgres.DataLayer.Info.schema(resource) || "public"
@@ -197,30 +201,107 @@ defmodule AshSync do
 
           mutation = put_in(mutation, ["syncMetadata", "relation"], [schema, table])
 
-          if action.type in [:update, :destroy] do
-            raise "not yet"
-          else
-            changeset =
-              Ash.Changeset.for_action(resource, action, mutation["changes"],
-                actor: actor,
-                tenant: tenant,
-                context: context,
-                skip_unknown_inputs: :*
-              )
+          case action.type do
+            :update ->
+              primary_key =
+                Map.take(
+                  mutation,
+                  Enum.map(Ash.Resource.Info.primary_key(resource), &to_string/1)
+                )
 
-            if changeset.valid? do
-              if Ash.can?(changeset, actor,
-                   pre_flight?: true,
-                   return_forbidden_error?: true,
-                   maybe_is: false
-                 ) do
-                {:cont, {:ok, {Map.put(changesets, index, changeset), [mutation | mutations]}}}
+              {:ok,
+               fn ->
+                 resource
+                 |> Ash.Query.do_filter(primary_key)
+                 |> Ash.Query.set_context(query)
+                 # TODO: params["input"] doesn't work, we don't get original input
+                 # https://github.com/TanStack/db/issues/96
+                 |> Ash.Query.for_read(read_action, params["input"] || %{},
+                   actor: actor,
+                   tenant: tenant,
+                   context: context
+                 )
+                 |> Ash.bulk_update(
+                   action,
+                   mutation["changes"],
+                   notify?: true,
+                   actor: actor,
+                   tenant: tenant,
+                   context: context
+                 )
+                 |> case do
+                   %Ash.BulkResult{status: :success, records: [record]} ->
+                     {:ok, record}
+
+                   %Ash.BulkResult{status: :success, records: []} ->
+                     {:error, "not found"}
+
+                   %Ash.BulkResult{status: :error, errors: errors} ->
+                     IO.inspect(errors)
+                     {:error, "something went wrong"}
+                 end
+               end}
+
+            :destroy ->
+              primary_key =
+                Map.take(
+                  mutation,
+                  Enum.map(Ash.Resource.Info.primary_key(resource), &to_string/1)
+                )
+
+              {:ok,
+               fn ->
+                 resource
+                 |> Ash.Query.do_filter(primary_key)
+                 |> Ash.Query.set_context(query)
+                 # TODO: params["input"] doesn't work, we don't get original input
+                 # https://github.com/TanStack/db/issues/96
+                 |> Ash.Query.for_read(read_action, params["input"] || %{},
+                   actor: actor,
+                   tenant: tenant,
+                   context: context
+                 )
+                 |> Ash.bulk_destroy(action, %{},
+                   notify?: true,
+                   actor: actor,
+                   tenant: tenant,
+                   context: context
+                 )
+                 |> case do
+                   %Ash.BulkResult{status: :success, records: [record]} ->
+                     {:ok, record}
+
+                   %Ash.BulkResult{status: :success, records: []} ->
+                     {:error, "not found"}
+
+                   %Ash.BulkResult{status: :error, errors: errors} ->
+                     IO.inspect(errors)
+                     {:error, "something went wrong"}
+                 end
+               end}
+
+            :create ->
+              changeset =
+                Ash.Changeset.for_action(resource, action, mutation["changes"],
+                  actor: actor,
+                  tenant: tenant,
+                  context: context,
+                  skip_unknown_inputs: :*
+                )
+
+              if changeset.valid? do
+                if Ash.can?(changeset, actor,
+                     pre_flight?: true,
+                     return_forbidden_error?: true,
+                     maybe_is: false
+                   ) do
+                  {:cont, {:ok, {Map.put(changesets, index, changeset), [mutation | mutations]}}}
+                else
+                  {:halt, {:error, Ash.Error.to_error_class(changeset.errors)}}
+                end
               else
                 {:halt, {:error, Ash.Error.to_error_class(changeset.errors)}}
               end
-            else
-              {:halt, {:error, Ash.Error.to_error_class(changeset.errors)}}
-            end
           end
       end
     end)
@@ -240,9 +321,12 @@ defmodule AshSync do
               changeset = changesets[Process.put(:ash_sync_hacky_count, 1)]
 
               if changeset.action.type == :create do
-                Ash.create(changeset)
+                case Ash.create(changeset) do
+                  {:ok, result} -> {:ok, result}
+                  {:error, error} -> {:error, error}
+                end
               else
-                {:error, "not yet"}
+                changeset.()
               end
             end,
             format: format,
