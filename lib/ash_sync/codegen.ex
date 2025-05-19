@@ -53,7 +53,7 @@ defmodule AshSync.Codegen do
           Collection,
           MutationFn,
           PendingMutation
-        } from '@tanstack/react-optimistic';#{types_to_import}
+        } from '@tanstack/react-db';#{types_to_import}
 
         export const ingestMutations: MutationFn = async ({ transaction }) => {
           const payload = transaction.mutations.map(
@@ -289,7 +289,7 @@ defmodule AshSync.Codegen do
 
           """
           #{type_definition}
-          export function #{lowercase_first(query_name)}({ #{input_destructure}options }: #{params_name} = {}): Collection<#{resource_type_name}> {
+          export function #{lowercase_first(query_name)}({ #{input_destructure}options }: #{params_name} = {}): ElectricCollection<#{resource_type_name}> {
             return createElectricCollection<#{resource_type_name}>({
               id: '#{name}',
               streamOptions: {
@@ -307,8 +307,7 @@ defmodule AshSync.Codegen do
 
     collections_content =
       """
-      import { Collection } from "@tanstack/db";
-      import { createElectricCollection } from "@tanstack/db-collections";
+      import { ElectricCollection, createElectricCollection } from "@tanstack/db-collections";
       import { ShapeStreamOptions } from "@electric-sql/client";#{types_to_import}
       const relativeUrl = (path) => (
         `${window.location.origin}${path}`
