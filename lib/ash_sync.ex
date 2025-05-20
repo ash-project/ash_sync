@@ -237,7 +237,6 @@ defmodule AshSync do
                      {:error, "not found"}
 
                    %Ash.BulkResult{status: :error, errors: errors} ->
-                     IO.inspect(errors)
                      {:error, "something went wrong"}
                  end
                end}

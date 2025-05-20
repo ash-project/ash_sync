@@ -55,6 +55,8 @@ defmodule AshSync.Codegen do
           PendingMutation
         } from '@tanstack/react-db';#{types_to_import}
 
+        import { ElectricCollection } from "@tanstack/db-collections";
+
         export const ingestMutations: MutationFn = async ({ transaction }) => {
           const payload = transaction.mutations.map(
             (mutation: PendingMutation<#{types_union}>) => {
@@ -78,8 +80,8 @@ defmodule AshSync.Codegen do
 
           const result = await response.json()
 
-          const collection: Collection = transaction.mutations[0]!.collection
-          await collection.config.sync.awaitTxid(result.txid)
+          const collection = transaction.mutations[0]!.collection as ElectricCollection;
+          await collection.awaitTxId(result.txid);
         }
         """
 
