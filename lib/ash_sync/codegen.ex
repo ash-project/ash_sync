@@ -168,7 +168,6 @@ defmodule AshSync.Codegen do
       |> Enum.map(& &1.resource)
       |> Enum.uniq()
       |> Enum.map(fn resource ->
-        # TODO: make configurable
         attributes = Ash.Resource.Info.public_attributes(resource)
         resource_type_name = resource_type_name(resource)
         schema_name = "#{lowercase_first(resource_type_name)}Schema"
@@ -408,6 +407,9 @@ defmodule AshSync.Codegen do
     |> Enum.join("")
   end
 
+  # TODO: handle defaults, emit (probably statefully with an agent or somethign)
+  # additional things that must be imported into the types file for this to work
+  # for instance, uuids will need to import a function to create uuids
   defp to_read_type(%{type: Ash.Type.String}), do: "z.string()"
   defp to_read_type(%{type: Ash.Type.UUID}), do: "z.string().uuid()"
 
