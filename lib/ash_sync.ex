@@ -1,6 +1,6 @@
 defmodule AshSync do
   defmodule Query do
-    defstruct [:name, :action]
+    defstruct [:name, :action, :on_insert, :on_update, :on_delete]
   end
 
   @query %Spark.Dsl.Entity{
@@ -14,43 +14,6 @@ defmodule AshSync do
       action: [
         type: :atom,
         doc: "The action to sync"
-      ]
-    ],
-    args: [:name, :action]
-  }
-
-  defmodule Mutation do
-    defstruct [:name, :action]
-  end
-
-  @mutation %Spark.Dsl.Entity{
-    name: :mutation,
-    target: Mutation,
-    schema: [
-      name: [
-        type: :atom,
-        doc: "The name of the query, shows up in `/sync/:name`"
-      ],
-      action: [
-        type: :atom,
-        doc: "The action to sync"
-      ]
-    ],
-    args: [:name, :action]
-  }
-
-  defmodule Resource do
-    defstruct [:resource, :on_insert, :on_update, :on_delete, queries: [], mutations: []]
-  end
-
-  @resource %Spark.Dsl.Entity{
-    name: :resource,
-    target: Resource,
-    describe: "Define available sync actions for a resource",
-    schema: [
-      resource: [
-        type: {:spark, Ash.Resource},
-        doc: "The resource being configured"
       ],
       on_insert: [
         type: :atom,
@@ -65,10 +28,47 @@ defmodule AshSync do
         doc: "The destroy action to run on delete"
       ]
     ],
+    args: [:name, :action]
+  }
+
+  defmodule Mutation do
+    defstruct [:name, :action]
+  end
+
+  # @mutation %Spark.Dsl.Entity{
+  #   name: :mutation,
+  #   target: Mutation,
+  #   schema: [
+  #     name: [
+  #       type: :atom,
+  #       doc: "The name of the mutation, shows up in `/mutate/:name`"
+  #     ],
+  #     action: [
+  #       type: :atom,
+  #       doc: "The action to call"
+  #     ]
+  #   ],
+  #   args: [:name, :action]
+  # }
+
+  defmodule Resource do
+    defstruct [:resource, queries: []]
+  end
+
+  @resource %Spark.Dsl.Entity{
+    name: :resource,
+    target: Resource,
+    describe: "Define available sync actions for a resource",
+    schema: [
+      resource: [
+        type: {:spark, Ash.Resource},
+        doc: "The resource being configured"
+      ]
+    ],
     args: [:resource],
     entities: [
-      queries: [@query],
-      mutations: [@mutation]
+      queries: [@query]
+      # mutations: [@mutation]
     ]
   }
 
@@ -116,13 +116,11 @@ defmodule AshSync do
         )
         |> Ash.data_layer_query!()
         |> case do
-          # todo: we're adding this hook all the time,
-          # but we need to not do that.
-          # %{
-          #   ash_query: %{authorize_results: authorize_results}
-          # }
-          # when authorize_results == [] ->
-          #   raise "Incompatible action, had authorize results"
+          %{
+            ash_query: %{authorize_results: authorize_results}
+          }
+          when authorize_results != [] ->
+            raise "Incompatible action, had authorize results"
 
           %{
             ash_query: %{after_action: after_action}
@@ -140,13 +138,13 @@ defmodule AshSync do
     end
   end
 
-  @spec mutate(
+  @spec sync_mutate(
           otp_app :: atom,
-          conn :: Plug.Con.t(),
+          conn :: Plug.Conn.t(),
           params :: map,
           opts :: Keyword.t()
         ) :: Plug.Conn.t()
-  def mutate(otp_app, conn, params, opts \\ []) do
+  def sync_mutate(otp_app, conn, params, opts \\ []) do
     format = opts[:format] || Phoenix.Sync.Writer.Format.TanstackDB
 
     actor = Ash.PlugHelpers.get_actor(conn)
@@ -174,17 +172,17 @@ defmodule AshSync do
         end
 
       Enum.find_value(sync_data, fn %{resource: resource, queries: queries} = sync ->
-        action = Map.get(sync, action_key)
+        query =
+          Enum.find(queries, fn query ->
+            if to_string(query.name) == mutation["query"] do
+              query
+            end
+          end)
 
-        if action do
-          query =
-            Enum.find(queries, fn query ->
-              if to_string(query.name) == mutation["query"] do
-                query
-              end
-            end)
+        if query do
+          action = Map.get(query, action_key)
 
-          if query do
+          if action do
             {resource, Ash.Resource.Info.action(resource, action), mutation, query}
           end
         end
@@ -195,8 +193,11 @@ defmodule AshSync do
 
         {resource, action, mutation, %{action: read_action} = query} ->
           # TODO: handle schema multitenancy here
-          # TODO: get actual default from repo?
-          schema = AshPostgres.DataLayer.Info.schema(resource) || "public"
+          schema =
+            AshPostgres.DataLayer.Info.schema(resource) ||
+              AshPostgres.DataLayer.Info.repo(resource, :read).default_prefix() || "public"
+
+          "public"
           table = AshPostgres.DataLayer.Info.table(resource)
 
           mutation = put_in(mutation, ["syncMetadata", "relation"], [schema, table])
@@ -213,7 +214,7 @@ defmodule AshSync do
                fn ->
                  resource
                  |> Ash.Query.do_filter(primary_key)
-                 |> Ash.Query.set_context(query)
+                 |> Ash.Query.set_context(context)
                  # TODO: params["input"] doesn't work, we don't get original input
                  # https://github.com/TanStack/db/issues/96
                  |> Ash.Query.for_read(read_action, params["input"] || %{},
@@ -224,6 +225,7 @@ defmodule AshSync do
                  |> Ash.bulk_update(
                    action,
                    mutation["changes"],
+                   strategy: [:atomic, :atomic_batches, :stream],
                    notify?: true,
                    actor: actor,
                    tenant: tenant,
@@ -252,7 +254,7 @@ defmodule AshSync do
                fn ->
                  resource
                  |> Ash.Query.do_filter(primary_key)
-                 |> Ash.Query.set_context(query)
+                 |> Ash.Query.set_context(context)
                  # TODO: params["input"] doesn't work, we don't get original input
                  # https://github.com/TanStack/db/issues/96
                  |> Ash.Query.for_read(read_action, params["input"] || %{},
@@ -262,6 +264,7 @@ defmodule AshSync do
                  )
                  |> Ash.bulk_destroy(action, %{},
                    notify?: true,
+                   strategy: [:atomic, :atomic_batches, :stream],
                    actor: actor,
                    tenant: tenant,
                    context: context
@@ -310,7 +313,9 @@ defmodule AshSync do
 
         # TODO: handle errors
         # TODO: extract out eager validation of changesets to before the transaction
-        # TODO: what??
+        # For bulk update/destroy this looks like attempting to build a `fully_atomic_changeset`
+        # and checking if its valid
+
         {:ok, txid} =
           mutations
           |> Enum.reverse()
@@ -335,9 +340,100 @@ defmodule AshSync do
         Plug.Conn.send_resp(conn, 200, Jason.encode!(%{txid: txid}))
 
       {:error, error} ->
-        IO.inspect(error)
+        case(AshPhoenix)
         # TODO: Need to figure out error message mapping
         Plug.Conn.send_resp(conn, 500, Jason.encode!(%{"error" => "something went wrong"}))
     end
   end
+
+  # @spec mutate(
+  #         otp_app :: atom,
+  #         conn :: Plug.Conn.t(),
+  #         params :: map,
+  #         opts :: Keyword.t()
+  #       ) :: Plug.Conn.t()
+  # def mutate(otp_app, conn, params, opts \\ []) do
+  #   # TODO: error handling using `AshPhoenix` as though it was
+  #   # a form.
+  #   # TODO: if action runs in a transaction, we should
+  #   # start an FE transaction, if not we don't?
+  #   # its a codegen concern though.
+  #   format = opts[:format] || Phoenix.Sync.Writer.Format.TanstackDB
+
+  #   actor = Ash.PlugHelpers.get_actor(conn)
+  #   tenant = Ash.PlugHelpers.get_tenant(conn)
+  #   context = Ash.PlugHelpers.get_context(conn) || %{}
+
+  #   otp_app
+  #   |> Ash.Info.domains()
+  #   |> Enum.find_value(fn domain ->
+  #     resources = AshSync.Info.sync(domain)
+
+  #     resources
+  #     |> Enum.find_value(fn %{resource: resource, mutations: mutations} ->
+  #       Enum.find_value(mutations, fn %AshSync.Mutation{name: name} = mutation ->
+  #         if to_string(name) == params["name"] do
+  #           {domain, resource, mutation}
+  #         end
+  #       end)
+  #     end)
+  #   end)
+  #   |> case do
+  #     nil ->
+  #       Plug.Conn.send_resp(conn, 404, "not found")
+
+  #     {domain, resource, mutation} ->
+  #       action = Ash.Resource.Info.action(resource, mutation.action)
+
+  #       case action.type do
+  #         :create ->
+  #           resource
+  #           |> Ash.Changeset.for_create(action.name, params["input"],
+  #             actor: actor,
+  #             tenant: tenant,
+  #             context: context,
+  #             domain: domain
+  #           )
+  #           |> Ash.create!()
+
+  #           Plug.Conn.send_resp(conn, 201, "{'status': 'ok'}")
+
+  #         :update ->
+  #           primary_keys = Enum.map(Ash.Resource.Info.primary_key(resource), &to_string/1)
+  #           primary_key = Map.take(params["key"], primary_keys)
+
+  #           resource
+  #           |> Ash.Query.do_filter(primary_key)
+  #           |> Ash.Query.set_context(context)
+  #           |> Ash.bulk_update(
+  #             action,
+  #             params["input"],
+  #             notify?: true,
+  #             actor: actor,
+  #             tenant: tenant,
+  #             context: context
+  #           )
+
+  #           Plug.Conn.send_resp(conn, 200, "{'status': 'ok'}")
+
+  #         :destroy ->
+  #           primary_keys = Enum.map(Ash.Resource.Info.primary_key(resource), &to_string/1)
+  #           primary_key = Map.take(params["key"], primary_keys)
+
+  #           resource
+  #           |> Ash.Query.do_filter(primary_key)
+  #           |> Ash.Query.set_context(context)
+  #           |> Ash.bulk_destroy(
+  #             action,
+  #             params["input"],
+  #             notify?: true,
+  #             actor: actor,
+  #             tenant: tenant,
+  #             context: context
+  #           )
+
+  #           Plug.Conn.send_resp(conn, 200, "{'status': 'ok'}")
+  #       end
+  #   end
+  # end
 end

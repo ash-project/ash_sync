@@ -11,13 +11,86 @@ defmodule AshSync.Codegen do
     generate_query(resources)
     generate_collections(resources)
     generate_schema(resources)
-    generate_mutations(resources)
+    generate_ingest(resources)
+    # generate_mutations(resources)
   end
 
-  defp generate_mutations(resources) do
+  # The idea here is that we can accept arbitrary mutations.
+  # Left out of the prototype for now.
+  # defp generate_mutations(resources) do
+  #   mutations =
+  #     resources
+  #     |> Enum.flat_map(fn resource ->
+  #       Enum.map(resource.mutations, fn mutation ->
+  #         {resource.resource, mutation}
+  #       end)
+  #     end)
+  #     |> Enum.map_join("\n", fn {resource, mutation} ->
+  #       mutation_name = "#{Macro.camelize(to_string(mutation.name))}"
+  #       action = Ash.Resource.Info.action(resource, mutation.action)
+
+  #       action_inputs =
+  #         resource
+  #         |> Ash.Resource.Info.action_inputs(action.name)
+  #         |> Enum.filter(&is_atom/1)
+  #         |> Enum.map(fn name ->
+  #           Enum.find(action.arguments, &(&1.name == name)) ||
+  #             Ash.Resource.Info.attribute(resource, name)
+  #         end)
+
+  #       params_name = "#{mutation_name}Params"
+
+  #       has_inputs? = not Enum.empty?(action_inputs)
+
+  #       params =
+  #         if has_inputs? do
+  #           "{input: input}"
+  #         else
+  #           "{}"
+  #         end
+
+  #       type_definition =
+  #         if has_inputs? do
+  #           """
+  #           type #{params_name} = {
+  #             input: {
+  #           #{Enum.map_join(action_inputs, ";\n", &"    #{&1.name}: #{to_input_type(&1)}")}
+  #             }
+  #           };
+  #           """
+  #         else
+  #           """
+  #           type #{params_name} = {};
+  #           """
+  #         end
+
+  #       """
+  #       #{type_definition}export function #{mutation_name}(#{params}: #{params_name}) {
+  #         fetch(relativeUrl('/mutate/'), {
+  #           method: "POST",
+  #           body: JSON.stringify(input)
+  #         })
+  #       }
+  #       """
+  #     end)
+
+  #   contents = """
+  #   const relativeUrl = (path) => (
+  #     `${window.location.origin}${path}`
+  #   )
+
+  #   #{mutations}
+  #   """
+
+  #   File.write!("assets/js/client/mutations.ts", contents)
+  # end
+
+  defp generate_ingest(resources) do
     resources =
       Enum.reject(resources, fn resource ->
-        !resource.on_update && !resource.on_insert && !resource.on_delete
+        Enum.all?(resource.queries, fn query ->
+          !query.on_update && !query.on_insert && !query.on_delete
+        end)
       end)
 
     if !Enum.empty?(resources) do
@@ -85,7 +158,7 @@ defmodule AshSync.Codegen do
         }
         """
 
-      File.write!("assets/js/client/mutations.ts", contents)
+      File.write!("assets/js/client/ingest.ts", contents)
     end
   end
 
