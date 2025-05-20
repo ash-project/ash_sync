@@ -4,7 +4,7 @@ AshSync is a declarative wrapper around `Phoenix.Sync` meant for Ash application
 
 ## Status
 
-I've laid out some patterns for what this should look like, and set up the typescript code generation process. **I need someone to champion this from here on.**
+I've laid out some patterns for what this should look like, and set up the typescript code generation process. **I need someone to champion this from here on.** See the #todo comments for more.
 
 updating/deleting does not appear to be working due to a client bug that I have not yet figured out.
 
